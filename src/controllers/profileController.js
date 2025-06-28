@@ -1,5 +1,6 @@
 // Enhanced profile controller for comprehensive user data collection
-// Handles AI-powered validation, field prompts, and profile completion for JY Alumni Bot v3.0
+// File: src/controllers/profileController.js
+// COMPLETE REPLACEMENT - Enhanced with better UX, AI validation, and comprehensive field prompts
 
 const { ENHANCED_PROFILE_FIELDS } = require('../models/User');
 const { 
@@ -17,182 +18,256 @@ const {
 } = require('../utils/validation');
 const { logError, logSuccess } = require('../middleware/logging');
 
-// Enhanced field prompts with examples and validation hints
+// Enhanced field prompts with better UX, examples, and clear guidance
 async function getFieldPrompt(fieldName, userSession = {}) {
     try {
         const prompts = {
-            fullName: `Please enter your **Full Name**:
+            fullName: `**👤 Full Name Required**
 
-Requirements:
-- Only letters, spaces, hyphens, and apostrophes
-- 2-100 characters long
-- Real name only
+Please enter your complete legal name:
 
-Example: Rajesh Kumar Singh
+**Requirements:**
+• 2-100 characters
+• Only letters, spaces, hyphens, apostrophes
+• Your real name (no nicknames)
 
-Type "later" to skip and search alumni now.`,
+**Examples:**
+• Rajesh Kumar Singh
+• Mary O'Connor-Smith
+• Priya Sharma
 
-            gender: `Please select your **Gender**:
+**Format:** First Middle Last`,
 
-1️⃣ Male
-2️⃣ Female  
-3️⃣ Others
+            gender: `**⚧ Gender Selection**
+
+Please select your gender:
+
+**1️⃣ Male**
+**2️⃣ Female**
+**3️⃣ Others**
 
 Reply with the number (1, 2, or 3)
 
-Type "later" to skip and search alumni now.`,
+**Example:** 1`,
 
-            professionalRole: `Please select your **Professional Role**:
+            professionalRole: `**💼 Professional Role**
 
-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.map((role, i) => `${i+1}️⃣ ${role}`).join('\n')}
+Please select your current professional role:
+
+${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.map((role, i) => `**${i+1}️⃣ ${role}**`).join('\n')}
 
 Reply with the number (1-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length})
 
-Type "later" to skip and search alumni now.`,
+**Example:** 3`,
 
-            dateOfBirth: `Please enter your **Date of Birth**:
+            dateOfBirth: `**🎂 Date of Birth Required**
 
-Format: DD-MM-YYYY
-Example: 15-08-1995
+Please enter your date of birth:
 
-Requirements:
-- Must be between 1960-2010
-- Valid date only
+**Format:** DD-MM-YYYY
 
-Type "later" to skip and search alumni now.`,
+**Requirements:**
+• Valid date between 1960-2010
+• Use exact format shown
 
-            country: `Please enter your **Country**:
+**Examples:**
+• 15-08-1995
+• 03-12-1988
+• 25-06-1992
 
-Example: India
+**Your format:** DD-MM-YYYY`,
 
-Requirements:
-- Real country name only
-- AI validation will verify authenticity
+            country: `**🌍 Country of Residence**
 
-Type "later" to skip and search alumni now.`,
+Please enter your current country:
 
-            city: `Please enter your **City**:
+**Requirements:**
+• Real country name only
+• AI validation ensures authenticity
+• Use official country names
 
-Example: Mumbai
+**Examples:**
+• India
+• United States
+• United Kingdom
+• Canada
+• Australia
 
-Requirements:
-- Real city name only
-- AI validation will verify authenticity
+**Your country:**`,
 
-Type "later" to skip and search alumni now.`,
+            city: `**🏙️ City of Residence**
 
-            state: `Please enter your **State/Province**:
+Please enter your current city:
 
-Example: Maharashtra
+**Requirements:**
+• Real city name only
+• AI validation for worldwide cities
+• Use official city names
 
-Requirements:
-- Real state/province name only
-- AI validation will verify authenticity
+**Examples:**
+• Mumbai
+• New York
+• London
+• Toronto
+• Sydney
 
-Type "later" to skip and search alumni now.`,
+**Your city:**`,
 
-            phone: `Please enter your **Phone Number**:
+            state: `**📍 State/Province Required**
 
-Format with country code:
-Examples:
-- +91 9876543210
-- 919876543210
-- +1 2025551234
+Please enter your state or province:
 
-Requirements:
-- Include country code
-- 10-15 digits total
+**Requirements:**
+• Real state/province name only
+• AI validation for worldwide regions
+• Use official names
 
-Type "later" to skip and search alumni now.`,
+**Examples:**
+• Maharashtra (India)
+• California (USA)
+• Ontario (Canada)
+• New South Wales (Australia)
 
-            additionalEmail: `Do you have an **Additional Email** to link?
+**Your state/province:**`,
 
-This helps other alumni find you through multiple email addresses.
+            phone: `**📱 Phone Number Required**
 
-Reply:
-- **YES** - I want to add another email
-- **NO** - Continue with current email only
+Please enter your phone number with country code:
 
-Type "later" to skip and search alumni now.`,
+**Format Examples:**
+• +91 9876543210 (India)
+• +1 2025551234 (USA)
+• +44 7911123456 (UK)
+• +61 412345678 (Australia)
 
-            linkedin: `Please enter your **LinkedIn Profile URL**:
+**Requirements:**
+• Include country code
+• 10-15 digits total
+• No special characters needed
 
-Example: https://linkedin.com/in/yourprofile
+**Your phone:**`,
 
-Requirements:
-- Complete LinkedIn URL
-- Must include linkedin.com
+            linkedin: `**🔗 LinkedIn Profile Required**
 
-Type "later" to skip and search alumni now.`,
+Please enter your LinkedIn profile URL:
 
-            instagram: `Do you have an **Instagram Profile** to share?
+**Requirements:**
+• Complete LinkedIn URL
+• Must include linkedin.com/in/
+• Your public profile link
 
-This is optional but helps with networking.
+**Examples:**
+• https://linkedin.com/in/yourname
+• https://www.linkedin.com/in/john-smith-123
 
-Reply:
-- **YES** - I want to share my Instagram
-- **NO** - Skip Instagram profile
+**Tips:**
+• Copy URL from your LinkedIn profile
+• Make sure it's your public profile URL
 
-Type "later" to skip and search alumni now.`,
+**Your LinkedIn URL:**`,
 
-            domain: `Please select your **Industry Domain**:
+            instagram: `**📸 Instagram Profile (Optional)**
 
-${ENHANCED_PROFILE_FIELDS.DOMAINS.map((domain, i) => `${i+1}️⃣ ${domain}`).slice(0, 10).join('\n')}
-${ENHANCED_PROFILE_FIELDS.DOMAINS.length > 10 ? `\n...and ${ENHANCED_PROFILE_FIELDS.DOMAINS.length - 10} more options` : ''}
+Do you have an Instagram profile to share?
+
+This helps with networking and personal branding.
+
+**Reply:**
+• **YES** - I want to add Instagram
+• **NO** - Skip Instagram profile
+
+**Example:** YES`,
+
+            domain: `**🏢 Industry Domain**
+
+Please select your primary industry domain:
+
+${ENHANCED_PROFILE_FIELDS.DOMAINS.slice(0, 10).map((domain, i) => `**${i+1}️⃣ ${domain}**`).join('\n')}
+${ENHANCED_PROFILE_FIELDS.DOMAINS.length > 10 ? `\n**...and ${ENHANCED_PROFILE_FIELDS.DOMAINS.length - 10} more options available**` : ''}
 
 Reply with the number (1-${ENHANCED_PROFILE_FIELDS.DOMAINS.length})
 
-Type "later" to skip and search alumni now.`,
+**Example:** 2`,
 
-            yatraImpact: `**How did Jagriti Yatra help you personally?**
+            yatraImpact: `**🚆 Jagriti Yatra Impact Assessment**
 
-You can select multiple options:
+How did Jagriti Yatra help you personally?
 
-${ENHANCED_PROFILE_FIELDS.YATRA_IMPACT.map((impact, i) => `${i+1}️⃣ ${impact}`).join('\n')}
+Select 1-3 options that apply:
 
-Reply with numbers separated by commas:
-Examples: 1,2 or 1,3 or 2,3 or 1,2,3
+${ENHANCED_PROFILE_FIELDS.YATRA_IMPACT.map((impact, i) => `**${i+1}️⃣ ${impact}**`).join('\n')}
 
-Type "later" to skip and search alumni now.`,
+**Reply with numbers separated by commas:**
 
-            communityAsks: `**What are your primary 3 support needs from our community?**
+**Examples:**
+• Single: 1
+• Multiple: 1,2
+• All three: 1,2,3
 
-Please select exactly 3 options:
+**Your selections:**`,
 
-${ENHANCED_PROFILE_FIELDS.COMMUNITY_ASKS.map((ask, i) => `${i+1}️⃣ ${ask}`).join('\n')}
+            communityAsks: `**🤝 Community Support Needs**
 
-Reply with exactly 3 numbers:
-Example: 1,3,5
+What are your PRIMARY 3 support needs from our community?
 
-Type "later" to skip and search alumni now.`,
+**⚠️ Select EXACTLY 3 options:**
 
-            communityGives: `**What can you contribute to our community?**
+${ENHANCED_PROFILE_FIELDS.COMMUNITY_ASKS.map((ask, i) => `**${i+1}️⃣ ${ask}**`).join('\n')}
+
+**Reply with exactly 3 numbers:**
+
+**Examples:**
+• 1,3,5
+• 2,7,10
+• 4,6,9
+
+**Your 3 selections:**`,
+
+            communityGives: `**🎁 Community Contributions**
+
+What can you contribute to our community?
 
 Select multiple options that apply:
 
-${ENHANCED_PROFILE_FIELDS.COMMUNITY_GIVES.map((give, i) => `${i+1}️⃣ ${give}`).join('\n')}
+${ENHANCED_PROFILE_FIELDS.COMMUNITY_GIVES.map((give, i) => `**${i+1}️⃣ ${give}**`).join('\n')}
 
-Reply with numbers separated by commas:
-Examples: 1,3,5,7 or 2,4,6
+**Reply with numbers separated by commas:**
 
-Type "later" to skip and search alumni now.`
+**Examples:**
+• Few: 1,3,5
+• Many: 1,3,5,7,9
+• Several: 2,4,6,8
+
+**Your contributions:**`,
+
+            additionalEmail: `**📧 Additional Email (Optional)**
+
+Do you have another email address to link?
+
+This helps other alumni find you through multiple emails.
+
+**Reply:**
+• **YES** - Add another email
+• **NO** - Continue with current email only
+
+**Example:** NO`
         };
 
         const prompt = prompts[fieldName];
         if (!prompt) {
             logError(new Error('Unknown field prompt requested'), { fieldName });
-            return `Please provide information for ${fieldName} or type "later" to skip:`;
+            return `Please provide information for ${fieldName}:`;
         }
 
         return prompt;
 
     } catch (error) {
         logError(error, { operation: 'getFieldPrompt', fieldName });
-        return `Please provide your ${fieldName} or type "later" to skip:`;
+        return `Please provide your ${fieldName}:`;
     }
 }
 
-// Enhanced field validation with AI integration
+// Enhanced field validation with AI integration and better error handling
 async function validateProfileField(fieldName, value, userSession = {}) {
     try {
         const cleanValue = sanitizeInput(value);
@@ -221,10 +296,15 @@ async function validateProfileField(fieldName, value, userSession = {}) {
                 }
                 return { 
                     valid: false, 
-                    message: `❌ Please select a number from 1-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length}
+                    message: `❌ **Invalid Selection**
 
-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.map((role, i) => `${i+1}️⃣ ${role}`).slice(0, 5).join('\n')}
-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}` 
+Please select a number from 1-${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length}
+
+**Options:**
+${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.slice(0, 5).map((role, i) => `${i+1}️⃣ ${role}`).join('\n')}
+${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}
+
+**Example:** 3` 
                 };
 
             case 'dateOfBirth':
@@ -250,7 +330,7 @@ ${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}`
                 }
                 return { 
                     valid: false, 
-                    message: '❌ Please reply with YES, NO, Y, N, 1, or 2' 
+                    message: '❌ **Invalid Response**\n\nPlease reply with:\n• YES or NO\n• Y or N\n• 1 or 2' 
                 };
 
             case 'linkedin':
@@ -266,7 +346,7 @@ ${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}`
                             return { 
                                 valid: false, 
                                 needsInstagramURL: true,
-                                message: 'Please enter your Instagram profile URL:\n\nExample: https://instagram.com/yourprofile' 
+                                message: '**Please enter your Instagram profile URL:**\n\n**Example:** https://instagram.com/yourprofile' 
                             };
                         } else {
                             return { valid: true, value: null };
@@ -274,7 +354,7 @@ ${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}`
                     }
                     return { 
                         valid: false, 
-                        message: '❌ Please reply with YES or NO' 
+                        message: '❌ **Invalid Response**\n\nPlease reply with:\n• YES or NO\n• Y or N' 
                     };
                 } else {
                     // They chose yes, now validate URL
@@ -293,11 +373,15 @@ ${ENHANCED_PROFILE_FIELDS.PROFESSIONAL_ROLES.length > 5 ? '...' : ''}`
                 }
                 return { 
                     valid: false, 
-                    message: `❌ Please select a number from 1-${ENHANCED_PROFILE_FIELDS.DOMAINS.length}
+                    message: `❌ **Invalid Selection**
 
-First 10 options:
+Please select a number from 1-${ENHANCED_PROFILE_FIELDS.DOMAINS.length}
+
+**First 10 options:**
 ${ENHANCED_PROFILE_FIELDS.DOMAINS.slice(0, 10).map((domain, i) => `${i+1}️⃣ ${domain}`).join('\n')}
-...` 
+...and ${ENHANCED_PROFILE_FIELDS.DOMAINS.length - 10} more
+
+**Example:** 2` 
                 };
 
             case 'yatraImpact':
@@ -312,11 +396,16 @@ ${ENHANCED_PROFILE_FIELDS.DOMAINS.slice(0, 10).map((domain, i) => `${i+1}️⃣ 
                 }
                 return { 
                     valid: false, 
-                    message: `❌ Please select 1-3 numbers from the list
+                    message: `❌ **Invalid Selection**
+
+Please select 1-3 numbers from the list:
 
 ${ENHANCED_PROFILE_FIELDS.YATRA_IMPACT.map((impact, i) => `${i+1}️⃣ ${impact}`).join('\n')}
 
-Examples: 1,2 or 1,3 or 2,3` 
+**Examples:**
+• Single: 1
+• Multiple: 1,2
+• Maximum: 1,2,3` 
                 };
 
             case 'communityAsks':
@@ -331,12 +420,17 @@ Examples: 1,2 or 1,3 or 2,3`
                 }
                 return { 
                     valid: false, 
-                    message: `❌ Please select exactly 3 numbers
+                    message: `❌ **Must Select Exactly 3 Options**
 
 ${ENHANCED_PROFILE_FIELDS.COMMUNITY_ASKS.slice(0, 8).map((ask, i) => `${i+1}️⃣ ${ask}`).join('\n')}
 ...and ${ENHANCED_PROFILE_FIELDS.COMMUNITY_ASKS.length - 8} more
 
-Example: 1,3,5` 
+**Examples:**
+• 1,3,5
+• 2,7,10
+• 4,6,9
+
+**Required:** Exactly 3 numbers` 
                 };
 
             case 'communityGives':
@@ -351,18 +445,21 @@ Example: 1,3,5`
                 }
                 return { 
                     valid: false, 
-                    message: `❌ Please select at least 1 number from the list
+                    message: `❌ **Select At Least 1 Option**
 
 ${ENHANCED_PROFILE_FIELDS.COMMUNITY_GIVES.slice(0, 8).map((give, i) => `${i+1}️⃣ ${give}`).join('\n')}
 ...and ${ENHANCED_PROFILE_FIELDS.COMMUNITY_GIVES.length - 8} more
 
-Examples: 1,3,5 or 2,4,6,8` 
+**Examples:**
+• Single: 1
+• Multiple: 1,3,5
+• Many: 2,4,6,8,10` 
                 };
 
             default:
                 return { 
                     valid: false, 
-                    message: `❌ Unknown field: ${fieldName}. Please contact support.` 
+                    message: `❌ **Unknown Field**\n\nField "${fieldName}" is not recognized. Please contact support.` 
                 };
         }
 
@@ -370,7 +467,7 @@ Examples: 1,3,5 or 2,4,6,8`
         logError(error, { operation: 'validateProfileField', fieldName, value });
         return { 
             valid: false, 
-            message: '❌ Validation error occurred. Please try again or contact support.' 
+            message: '❌ **Validation Error**\n\nTechnical error occurred. Please try again or contact support.' 
         };
     }
 }
@@ -387,8 +484,9 @@ function getProfileCompletionStatus(user) {
             isComplete: incompleteFields.length === 0,
             completionPercentage: completionPercentage,
             incompleteFields: incompleteFields,
-            totalFields: 15,
-            completedFields: 15 - incompleteFields.length
+            totalFields: 13,
+            completedFields: 13 - incompleteFields.length,
+            searchUnlocked: incompleteFields.length === 0
         };
 
     } catch (error) {
@@ -397,58 +495,67 @@ function getProfileCompletionStatus(user) {
             isComplete: false,
             completionPercentage: 0,
             incompleteFields: [],
-            totalFields: 15,
-            completedFields: 0
+            totalFields: 13,
+            completedFields: 0,
+            searchUnlocked: false
         };
     }
 }
 
-// Generate profile summary for user
+// Generate comprehensive profile summary for user
 function generateProfileSummary(user) {
     try {
         const enhanced = user.enhancedProfile || {};
         const basic = user.basicProfile || {};
         
-        let summary = `📋 **Your Profile Summary:**\n\n`;
+        let summary = `📋 **Your Complete Profile Summary**\n\n`;
         
         // Basic Information
-        if (enhanced.fullName) summary += `👤 **Name:** ${enhanced.fullName}\n`;
-        if (enhanced.gender) summary += `⚧ **Gender:** ${enhanced.gender}\n`;
-        if (enhanced.dateOfBirth) summary += `🎂 **Birth Date:** ${enhanced.dateOfBirth}\n`;
+        summary += `**👤 Personal Information:**\n`;
+        if (enhanced.fullName) summary += `• **Name:** ${enhanced.fullName}\n`;
+        if (enhanced.gender) summary += `• **Gender:** ${enhanced.gender}\n`;
+        if (enhanced.dateOfBirth) summary += `• **Birth Date:** ${enhanced.dateOfBirth}\n`;
         
         // Professional Information
-        if (enhanced.professionalRole) summary += `💼 **Role:** ${enhanced.professionalRole}\n`;
-        if (enhanced.domain) summary += `🏢 **Domain:** ${enhanced.domain}\n`;
+        summary += `\n**💼 Professional Details:**\n`;
+        if (enhanced.professionalRole) summary += `• **Role:** ${enhanced.professionalRole}\n`;
+        if (enhanced.domain) summary += `• **Domain:** ${enhanced.domain}\n`;
         
         // Location
+        summary += `\n**📍 Location Information:**\n`;
         if (enhanced.city && enhanced.state && enhanced.country) {
-            summary += `📍 **Location:** ${enhanced.city}, ${enhanced.state}, ${enhanced.country}\n`;
+            summary += `• **Address:** ${enhanced.city}, ${enhanced.state}, ${enhanced.country}\n`;
         }
         
-        // Contact
-        if (enhanced.phone) summary += `📱 **Phone:** ${enhanced.phone}\n`;
-        if (basic.email) summary += `📧 **Email:** ${basic.email}\n`;
+        // Contact Details
+        summary += `\n**📞 Contact Information:**\n`;
+        if (enhanced.phone) summary += `• **Phone:** ${enhanced.phone}\n`;
+        if (basic.email) summary += `• **Primary Email:** ${basic.email}\n`;
         if (basic.linkedEmails && basic.linkedEmails.length > 0) {
-            summary += `📧 **Additional Emails:** ${basic.linkedEmails.length}\n`;
+            summary += `• **Additional Emails:** ${basic.linkedEmails.length} linked\n`;
         }
         
         // Social Media
-        if (enhanced.linkedin) summary += `🔗 **LinkedIn:** Added\n`;
-        if (enhanced.instagram) summary += `📸 **Instagram:** Added\n`;
+        summary += `\n**🔗 Social Profiles:**\n`;
+        if (enhanced.linkedin) summary += `• **LinkedIn:** ✅ Added\n`;
+        if (enhanced.instagram) summary += `• **Instagram:** ✅ Added\n`;
         
         // Community Engagement
+        summary += `\n**🤝 Community Engagement:**\n`;
         if (enhanced.yatraImpact && enhanced.yatraImpact.length > 0) {
-            summary += `🚆 **Yatra Impact:** ${enhanced.yatraImpact.length} selected\n`;
+            summary += `• **Yatra Impact:** ${enhanced.yatraImpact.length} selected\n`;
         }
         if (enhanced.communityAsks && enhanced.communityAsks.length > 0) {
-            summary += `🤝 **Support Needs:** ${enhanced.communityAsks.length} selected\n`;
+            summary += `• **Support Needs:** ${enhanced.communityAsks.length} areas\n`;
         }
         if (enhanced.communityGives && enhanced.communityGives.length > 0) {
-            summary += `🎁 **Contributions:** ${enhanced.communityGives.length} selected\n`;
+            summary += `• **Contributions:** ${enhanced.communityGives.length} offerings\n`;
         }
         
         const status = getProfileCompletionStatus(user);
-        summary += `\n✅ **Completion:** ${status.completionPercentage}% (${status.completedFields}/${status.totalFields} fields)`;
+        summary += `\n**✅ Profile Status:**\n`;
+        summary += `• **Completion:** ${status.completionPercentage}% (${status.completedFields}/${status.totalFields} fields)\n`;
+        summary += `• **Search Access:** ${status.searchUnlocked ? '🔓 Unlocked' : '🔒 Locked (100% required)'}\n`;
         
         return summary;
         
@@ -458,70 +565,112 @@ function generateProfileSummary(user) {
     }
 }
 
-// Validate specific field combinations
-function validateFieldCombination(fields) {
-    try {
-        const errors = [];
+// Enhanced field-specific help and guidance
+function getFieldHelp(fieldName) {
+    const helpInfo = {
+        fullName: {
+            title: "Full Name Help",
+            tips: [
+                "Use your complete legal name",
+                "Include first, middle (if any), and last name",
+                "Only letters, spaces, hyphens, and apostrophes allowed",
+                "No nicknames, usernames, or special characters"
+            ],
+            examples: [
+                "Rajesh Kumar Singh",
+                "Mary O'Connor-Smith", 
+                "Priya Sharma",
+                "John William Smith"
+            ],
+            commonErrors: [
+                "Using nicknames instead of real names",
+                "Including numbers or special characters",
+                "Using abbreviations"
+            ]
+        },
         
-        // Location validation
-        if (fields.city && fields.state && fields.country) {
-            // Additional validation can be added here
+        city: {
+            title: "City Name Help",
+            tips: [
+                "Enter your current city of residence",
+                "Use official city names only",
+                "AI validates against worldwide city database",
+                "Avoid abbreviations or codes"
+            ],
+            examples: [
+                "Mumbai (India)",
+                "New York (USA)",
+                "London (UK)",
+                "Toronto (Canada)"
+            ],
+            commonErrors: [
+                "Using state/country names instead of city",
+                "Using abbreviations like 'NYC'",
+                "Entering person names"
+            ]
+        },
+        
+        phone: {
+            title: "Phone Number Help",
+            tips: [
+                "Always include country code",
+                "Format: +[country code] [number]",
+                "10-15 digits total length",
+                "No special formatting needed"
+            ],
+            examples: [
+                "+91 9876543210 (India)",
+                "+1 2025551234 (USA)",
+                "+44 7911123456 (UK)",
+                "+61 412345678 (Australia)"
+            ],
+            commonErrors: [
+                "Forgetting country code",
+                "Using wrong country code",
+                "Including extra symbols"
+            ]
+        },
+        
+        linkedin: {
+            title: "LinkedIn Profile Help",
+            tips: [
+                "Use your complete LinkedIn profile URL",
+                "Must include 'linkedin.com/in/'",
+                "Copy directly from your LinkedIn profile",
+                "Ensure it's your public profile URL"
+            ],
+            examples: [
+                "https://linkedin.com/in/yourname",
+                "https://www.linkedin.com/in/john-smith-123",
+                "https://linkedin.com/in/priya-sharma-456"
+            ],
+            commonErrors: [
+                "Using company LinkedIn page",
+                "Incomplete or incorrect URLs",
+                "Private profile URLs"
+            ]
         }
-        
-        // Professional role and domain compatibility
-        if (fields.professionalRole && fields.domain) {
-            // Could add logic to check if role matches domain
-        }
-        
-        // Community asks vs gives balance
-        if (fields.communityAsks && fields.communityGives) {
-            const asksCount = fields.communityAsks.length;
-            const givesCount = fields.communityGives.length;
-            
-            if (asksCount > 0 && givesCount === 0) {
-                errors.push('Consider adding what you can contribute to the community');
-            }
-        }
-        
-        return {
-            valid: errors.length === 0,
-            errors: errors,
-            suggestions: generateFieldSuggestions(fields)
-        };
-        
-    } catch (error) {
-        logError(error, { operation: 'validateFieldCombination' });
-        return { valid: true, errors: [], suggestions: [] };
-    }
+    };
+    
+    return helpInfo[fieldName] || {
+        title: `${fieldName} Help`,
+        tips: ["Follow the format shown in the example"],
+        examples: ["Please refer to the field prompt"],
+        commonErrors: ["Check the field requirements"]
+    };
 }
 
-// Generate suggestions for field improvements
-function generateFieldSuggestions(fields) {
-    const suggestions = [];
+// Generate field-specific error context
+function getFieldErrorContext(fieldName, errorType) {
+    const contexts = {
+        validation_failed: `The ${fieldName} you entered doesn't meet our requirements.`,
+        format_error: `The format for ${fieldName} is incorrect.`,
+        ai_validation_failed: `Our AI validation couldn't verify your ${fieldName}.`,
+        required_field: `${fieldName} is required for profile completion.`,
+        invalid_selection: `Please select a valid option for ${fieldName}.`
+    };
     
-    try {
-        if (!fields.linkedin) {
-            suggestions.push('Add LinkedIn profile for better professional networking');
-        }
-        
-        if (!fields.instagram && fields.domain && 
-            ['Media & Entertainment', 'Marketing', 'Design'].includes(fields.domain)) {
-            suggestions.push('Consider adding Instagram for creative field networking');
-        }
-        
-        if (fields.communityAsks && fields.communityAsks.length < 3) {
-            suggestions.push('Select all 3 support needs for better matching');
-        }
-        
-        if (fields.communityGives && fields.communityGives.length < 2) {
-            suggestions.push('Add more contributions to help other alumni');
-        }
-        
-    } catch (error) {
-        logError(error, { operation: 'generateFieldSuggestions' });
-    }
-    
-    return suggestions.slice(0, 3); // Max 3 suggestions
+    return contexts[errorType] || `There's an issue with your ${fieldName}.`;
 }
 
 // Enhanced field display for admin/debugging
@@ -533,11 +682,18 @@ function getFieldDisplayInfo(fieldName, value) {
             value: value,
             type: typeof value,
             isArray: Array.isArray(value),
-            length: Array.isArray(value) ? value.length : (value ? value.toString().length : 0)
+            length: Array.isArray(value) ? value.length : (value ? value.toString().length : 0),
+            validation: {
+                required: true,
+                hasAIValidation: ['city', 'state', 'country'].includes(fieldName),
+                hasFormatValidation: ['phone', 'linkedin', 'dateOfBirth', 'email'].includes(fieldName),
+                isMultipleChoice: ['gender', 'professionalRole', 'domain', 'yatraImpact', 'communityAsks', 'communityGives'].includes(fieldName)
+            }
         };
         
         if (Array.isArray(value)) {
             fieldInfo.items = value;
+            fieldInfo.itemCount = value.length;
         }
         
         return fieldInfo;
@@ -571,13 +727,29 @@ function getFieldDisplayName(fieldName) {
     return displayNames[fieldName] || fieldName.charAt(0).toUpperCase() + fieldName.slice(1);
 }
 
+// Get validation statistics for monitoring
+function getValidationStatistics() {
+    return {
+        totalFields: 13,
+        requiredFields: 13,
+        optionalFields: 0,
+        aiValidatedFields: ['city', 'state', 'country'],
+        formatValidatedFields: ['phone', 'linkedin', 'dateOfBirth', 'email', 'fullName'],
+        multipleChoiceFields: ['gender', 'professionalRole', 'domain', 'yatraImpact', 'communityAsks', 'communityGives'],
+        arrayFields: ['yatraImpact', 'communityAsks', 'communityGives'],
+        strictValidationEnabled: true,
+        completionRequirement: '100%'
+    };
+}
+
 module.exports = {
     getFieldPrompt,
     validateProfileField,
     getProfileCompletionStatus,
     generateProfileSummary,
-    validateFieldCombination,
-    generateFieldSuggestions,
+    getFieldHelp,
+    getFieldErrorContext,
     getFieldDisplayInfo,
-    getFieldDisplayName
+    getFieldDisplayName,
+    getValidationStatistics
 };

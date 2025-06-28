@@ -1,14 +1,15 @@
-// Authenticated user controller for JY Alumni Bot with enhanced profile system
-// Handles profile completion, updates, search, and all user interactions for verified users
+// Authenticated user controller for JY Alumni Bot with STRICT 100% profile completion enforcement
+// File: src/controllers/authenticatedUserController.js
+// COMPLETE REPLACEMENT - Enhanced with strict profile validation and better UX
 
-const { getIncompleteFields, updateUserProfile, markProfileCompleted, getProfileCompletionPercentage, hasMinimumProfileCompletion, findUserByWhatsAppNumber, ENHANCED_PROFILE_FIELDS } = require('../models/User');
+const { getIncompleteFields, updateUserProfile, markProfileCompleted, getProfileCompletionPercentage, hasMinimumProfileCompletion, findUserByWhatsAppNumber, ENHANCED_PROFILE_FIELDS, canAccessSearch } = require('../models/User');
 const { comprehensiveAlumniSearch } = require('../services/searchService');
 const { checkDailyLimit } = require('../services/rateLimiter');
 const { handleCasualConversation } = require('./conversationController');
 const { validateProfileField, getFieldPrompt } = require('./profileController');
 const { logUserActivity, logError } = require('../middleware/logging');
 
-// Main handler for authenticated user interactions
+// Main handler for authenticated user interactions with STRICT 100% profile enforcement
 async function handleAuthenticatedUser(userMessage, intent, userSession, whatsappNumber) {
     try {
         const user = userSession.user_data;
@@ -21,17 +22,54 @@ async function handleAuthenticatedUser(userMessage, intent, userSession, whatsap
             userName: userName
         });
         
-        // PRIORITY 1: Handle profile updates in progress (NO SEARCH ALLOWED)
+        // Check profile completion status FIRST - STRICT 100% enforcement
+        const completionPercentage = getProfileCompletionPercentage(user);
+        const incompleteFields = getIncompleteFields(user);
+        const isProfileComplete = incompleteFields.length === 0;
+        const searchAccess = canAccessSearch(user);
+        
+        // PRIORITY 1: Handle profile updates in progress (BLOCK ALL OTHER ACTIONS)
         if (userSession.waiting_for && userSession.waiting_for.startsWith('updating_')) {
             return await handleProfileFieldUpdate(userMessage, intent, userSession, whatsappNumber);
         }
         
-        // PRIORITY 2: Handle profile completion choice
+        // PRIORITY 2: STRICT SEARCH BLOCKING - NO SEARCH WITHOUT 100% COMPLETION
+        if (intent.type === 'search' || intent.type === 'skip_and_search') {
+            if (!searchAccess.canAccess) {
+                // Force start profile completion
+                const firstField = incompleteFields[0];
+                const totalFields = incompleteFields.length;
+                
+                userSession.waiting_for = `updating_${firstField}`;
+                userSession.current_field = firstField;
+                userSession.remaining_fields = incompleteFields.slice(1);
+                userSession.incomplete_fields = incompleteFields;
+                userSession.search_blocked = true;
+                
+                return `🚫 **SEARCH BLOCKED - Profile Incomplete**
+
+Your profile: ${completionPercentage}% complete
+**⚠️ REQUIRED: 100% completion for search access**
+
+Missing ${totalFields} field${totalFields > 1 ? 's' : ''}. Let's complete them now:
+
+**Step 1 of ${totalFields}:** ${getFieldDisplayName(firstField)}
+
+${await getFieldPrompt(firstField, userSession)}
+
+🔒 *Search will be unlocked only after completing ALL fields.*`;
+            }
+            
+            // Profile complete - proceed with search
+            return await handleSearchRequest(intent, userSession, whatsappNumber, intent.type === 'skip_and_search');
+        }
+        
+        // PRIORITY 3: Handle profile completion choice (if waiting)
         if (userSession.waiting_for === 'profile_choice') {
             return await handleProfileChoice(userMessage, intent, userSession, whatsappNumber);
         }
         
-        // PRIORITY 3: Handle additional email/instagram choices
+        // PRIORITY 4: Handle additional email/instagram choices
         if (userSession.waiting_for === 'additional_email_choice') {
             return await handleAdditionalEmailChoice(userMessage, intent, userSession, whatsappNumber);
         }
@@ -44,41 +82,110 @@ async function handleAuthenticatedUser(userMessage, intent, userSession, whatsap
             return await handleInstagramChoice(userMessage, intent, userSession, whatsappNumber);
         }
         
-        // PRIORITY 4: Check profile completion for search
-        if (intent.type === 'search' || intent.type === 'skip_and_search') {
-            const hasMinCompletion = hasMinimumProfileCompletion(user, 70);
-            
-            if (!hasMinCompletion) {
-                const completionPercentage = getProfileCompletionPercentage(user);
-                const incompleteFields = getIncompleteFields(user);
+        // PRIORITY 5: Profile update request
+        if (intent.type === 'profile_update') {
+            if (!isProfileComplete) {
+                const firstField = incompleteFields[0];
+                const totalFields = incompleteFields.length;
                 
-                if (incompleteFields.length > 0) {
-                    const firstField = incompleteFields[0];
-                    const totalFields = incompleteFields.length;
-                    
-                    userSession.waiting_for = `updating_${firstField}`;
-                    userSession.current_field = firstField;
-                    userSession.remaining_fields = incompleteFields.slice(1);
-                    userSession.incomplete_fields = incompleteFields;
-                    
-                    return `🚫 Profile completion required for search!
+                userSession.waiting_for = `updating_${firstField}`;
+                userSession.current_field = firstField;
+                userSession.remaining_fields = incompleteFields.slice(1);
+                userSession.incomplete_fields = incompleteFields;
+                
+                return `✨ **Profile Completion Required**
 
-Your profile: ${completionPercentage}% complete
-Required: 70% minimum
+Currently: ${completionPercentage}% complete
+Missing: ${totalFields} field${totalFields > 1 ? 's' : ''}
 
-Let's complete it now:
-
-Step 1/${totalFields}:
+**Step 1 of ${totalFields}:** ${getFieldDisplayName(firstField)}
 
 ${await getFieldPrompt(firstField, userSession)}`;
-                }
+            } else {
+                return `🎉 **Profile Complete!** 
+
+✅ All fields completed (100%)
+🔓 Search is now available!
+
+What expertise are you looking for today?
+
+**Popular Searches:**
+• "React developers in Mumbai"
+• "fintech entrepreneurs"
+• "marketing experts"
+• "healthcare professionals"`;
             }
-            
-            return await handleSearchRequest(intent, userSession, whatsappNumber, intent.type === 'skip_and_search');
         }
         
-        // PRIORITY 5: Regular interaction handling - DIRECT PROFILE START
-        return await handleRegularInteraction(userMessage, intent, userSession, whatsappNumber, user, userName);
+        // PRIORITY 6: Casual conversation
+        if (intent.type === 'casual') {
+            const casualResponse = await handleCasualConversation(userMessage, {
+                name: userName,
+                profileComplete: isProfileComplete,
+                authenticated: true,
+                completionPercentage: completionPercentage
+            });
+            
+            if (!isProfileComplete) {
+                return `${casualResponse}
+
+📋 **Profile Status:** ${completionPercentage}% complete
+🔒 Missing ${incompleteFields.length} field${incompleteFields.length > 1 ? 's' : ''} for search access.
+
+Type "complete profile" to continue.`;
+            }
+            
+            return casualResponse;
+        }
+        
+        // PRIORITY 7: Auto-start profile completion for incomplete profiles
+        if (!isProfileComplete && !userSession.profile_completion_started) {
+            const firstField = incompleteFields[0];
+            const totalFields = incompleteFields.length;
+            
+            userSession.waiting_for = `updating_${firstField}`;
+            userSession.current_field = firstField;
+            userSession.remaining_fields = incompleteFields.slice(1);
+            userSession.incomplete_fields = incompleteFields;
+            userSession.profile_completion_started = true;
+            
+            return `👋 **Welcome back, ${userName}!**
+
+Your profile: ${completionPercentage}% complete
+🔒 **Search requires 100% completion**
+
+Let's complete the remaining ${totalFields} field${totalFields > 1 ? 's' : ''}:
+
+**Step 1 of ${totalFields}:** ${getFieldDisplayName(firstField)}
+
+${await getFieldPrompt(firstField, userSession)}`;
+        }
+        
+        // PRIORITY 8: Profile complete - show search options
+        if (isProfileComplete) {
+            userSession.ready = true;
+            userSession.waiting_for = 'ready';
+            
+            return `🌟 **Hi ${userName}!**
+
+✅ **Profile Complete** (100%)
+🔓 **Search Unlocked**
+
+What expertise are you looking for today?
+
+**Popular Searches:**
+• "React developers in Bangalore"
+• "fintech startup founders" 
+• "digital marketing experts"
+• "healthcare entrepreneurs"
+
+Or describe what you need help with!`;
+        }
+        
+        // Fallback - should rarely reach here
+        return `Hi ${userName}! 👋
+
+I'm here to help you connect with our alumni network.`;
         
     } catch (error) {
         logError(error, { operation: 'handleAuthenticatedUser', whatsappNumber, intent: intent.type });
@@ -86,18 +193,20 @@ ${await getFieldPrompt(firstField, userSession)}`;
     }
 }
 
-// Handle search requests with rate limiting
+// Enhanced search request handling
 async function handleSearchRequest(intent, userSession, whatsappNumber, isSkipAndSearch = false) {
     try {
         const withinLimit = await checkDailyLimit(whatsappNumber);
         
         if (!withinLimit) {
-            return `🚫 Daily search limit reached (30 searches per day).
+            return `🚫 **Daily Search Limit Reached**
 
-Your searches reset at midnight. Meanwhile, you can:
-- Update your profile
-- Ask general questions
-- Come back tomorrow for more searches`;
+You've used all 30 searches for today. Limit resets at midnight.
+
+Meanwhile, you can:
+• Update your profile
+• Ask general questions
+• Come back tomorrow for more searches`;
         }
         
         const searchQuery = intent.query;
@@ -130,13 +239,17 @@ You can complete your profile anytime by saying "update profile".`;
     }
 }
 
-// Handle profile field updates with enhanced validation - FIXED VERSION
+// Enhanced profile field update with better error handling and UX
 async function handleProfileFieldUpdate(userMessage, intent, userSession, whatsappNumber) {
     try {
         const fieldName = userSession.waiting_for.replace('updating_', '');
         
-        // Handle skip/stop/pause commands - NO SEARCH DURING PROFILE UPDATE
+        // Handle stop commands (but discourage skipping)
         if (intent.type === 'skip_profile' || userMessage.toLowerCase().includes('later') || userMessage.toLowerCase().includes('stop')) {
+            const remainingFields = userSession.remaining_fields || [];
+            const totalFields = userSession.incomplete_fields?.length || 1;
+            const currentStep = totalFields - remainingFields.length;
+            
             userSession.waiting_for = 'ready';
             userSession.ready = true;
             userSession.profile_skipped = true;
@@ -145,58 +258,89 @@ async function handleProfileFieldUpdate(userMessage, intent, userSession, whatsa
             delete userSession.current_field;
             delete userSession.remaining_fields;
             delete userSession.incomplete_fields;
+            delete userSession.field_retry_count;
             
-            return `Profile update stopped! 👍
+            return `⏸️ **Profile Update Paused**
 
-You can complete your profile anytime by saying "update profile".
+Progress: ${currentStep}/${totalFields} fields completed
+🔒 **Search remains locked until 100% completion**
 
-What can I help you with?`;
+When ready to continue, type:
+• "complete profile" 
+• "update profile"
+
+What can I help you with in the meantime?`;
         }
         
-        // Block search during profile updates
+        // Block search during profile updates with clear messaging
         if (intent.type === 'search' || intent.type === 'skip_and_search') {
-            return `Please complete this profile field first, or type "later" to stop profile update.
+            const remainingFields = userSession.remaining_fields || [];
+            const totalFields = userSession.incomplete_fields?.length || 1;
+            const currentStep = totalFields - remainingFields.length + 1;
+            
+            return `🔒 **Profile Completion Required First**
 
-Current field: ${getFieldDisplayName(fieldName)}
+Please complete this field to unlock search.
 
-${await getFieldPrompt(fieldName, userSession)}`;
+**Current: Step ${currentStep} of ${totalFields}**
+**Field:** ${getFieldDisplayName(fieldName)}
+
+${await getFieldPrompt(fieldName, userSession)}
+
+🔍 *Search unlocks after ALL fields are completed.*`;
         }
         
-        // Validate field input
+        // Validate field input with enhanced error messages
         const validation = await validateProfileField(fieldName, userMessage, userSession);
         
         if (!validation.valid) {
-            return `${validation.message}
+            // Enhanced error message with retry count and help
+            const retryCount = userSession.field_retry_count || 0;
+            userSession.field_retry_count = retryCount + 1;
+            
+            let errorMessage = validation.message;
+            
+            if (userSession.field_retry_count >= 3) {
+                errorMessage += `\n\n💡 **Need Help?**
+Having trouble with this field? Here are some tips:
 
-Or type "later" to stop profile update.`;
+${getFieldHelpTips(fieldName)}
+
+Type "help" for more assistance or try again.`;
+            }
+            
+            return errorMessage;
         }
+        
+        // Reset retry count on successful validation
+        userSession.field_retry_count = 0;
         
         // Update the field in database
         const success = await updateUserProfile(whatsappNumber, fieldName, validation.value);
         
         if (!success) {
-            return `❌ Error updating your profile. Please try again.
+            return `❌ **Database Error**
 
-Current field: ${getFieldDisplayName(fieldName)}
+Unable to save your ${getFieldDisplayName(fieldName)}. Please try again.
 
 ${await getFieldPrompt(fieldName, userSession)}`;
         }
         
-        // Get fresh user data to calculate progress
+        // Get fresh user data and update session
         const updatedUser = await findUserByWhatsAppNumber(whatsappNumber);
         if (updatedUser) {
-            userSession.user_data = updatedUser; // Update session with fresh data
+            userSession.user_data = updatedUser;
         }
         
-        // Calculate progress using session data (more reliable)
+        // Calculate progress
         const remainingFields = userSession.remaining_fields || [];
         const totalFields = userSession.incomplete_fields?.length || 1;
         const currentStep = totalFields - remainingFields.length;
         const progressPercentage = Math.round((currentStep / totalFields) * 100);
         
-        let progressMessage = `✅ ${getFieldDisplayName(fieldName)} saved!
+        let progressMessage = `✅ **${getFieldDisplayName(fieldName)} Saved!**
 
-Progress: ${currentStep}/${totalFields} (${progressPercentage}%)`;
+📊 **Progress:** ${currentStep}/${totalFields} (${progressPercentage}%)`;
         
         // Move to next field or complete
         if (remainingFields.length > 0) {
@@ -207,23 +351,24 @@ Progress: ${currentStep}/${totalFields} (${progressPercentage}%)`;
             userSession.current_field = nextField;
             userSession.remaining_fields = remainingFields.slice(1);
             
-            progressMessage += `\n\nStep ${currentStep + 1}/${totalFields}:
+            progressMessage += `\n\n**Step ${currentStep + 1} of ${totalFields}:** ${getFieldDisplayName(nextField)}
 
 ${await getFieldPrompt(nextField, userSession)}`;
         } else {
-            // Profile completion
+            // Profile completion!
             await markProfileCompleted(whatsappNumber);
             
-            progressMessage += `\n\n🎉 Profile completed!
+            progressMessage += `\n\n🎉 **PROFILE COMPLETED!**
 
-You're now fully connected to our alumni network!
+✅ **100% Complete - Search Now Unlocked!**
+🌟 **Welcome to the full JY Alumni Network!**
 
-What can I help you find today?
+What expertise are you looking for today?
 
-Examples:
-- "Need help with React development"
-- "Looking for fintech entrepreneurs"
-- "Connect me with marketing experts"`;
+**Try these searches:**
+• "React developers in your city"
+• "startup mentors in fintech"
+• "marketing strategy experts"`;
             
             userSession.waiting_for = 'ready';
             userSession.ready = true;
@@ -233,6 +378,7 @@ Examples:
             delete userSession.current_field;
             delete userSession.remaining_fields;
             delete userSession.incomplete_fields;
+            delete userSession.field_retry_count;
         }
         
         logUserActivity(whatsappNumber, 'profile_field_updated', {
@@ -245,7 +391,11 @@ Examples:
         
     } catch (error) {
         logError(error, { operation: 'handleProfileFieldUpdate', whatsappNumber });
-        return "❌ Error updating your profile. Please try again.";
+        return `❌ **Technical Error**
+
+Unable to process your input. Please try again.
+
+If this continues, contact support: support@jagritiyatra.com`;
     }
 }
 
@@ -255,16 +405,28 @@ async function handleProfileChoice(userMessage, intent, userSession, whatsappNum
         // Block search if profile completion is required
         if (intent.type === 'search') {
             const user = userSession.user_data;
-            const hasMinCompletion = hasMinimumProfileCompletion(user, 70);
+            const searchAccess = canAccessSearch(user);
             
-            if (!hasMinCompletion) {
+            if (!searchAccess.canAccess) {
                 const completionPercentage = getProfileCompletionPercentage(user);
-                return `🚫 Please complete your profile first!
+                const incompleteFields = getIncompleteFields(user);
+                const firstField = incompleteFields[0];
+                
+                userSession.waiting_for = `updating_${firstField}`;
+                userSession.current_field = firstField;
+                userSession.remaining_fields = incompleteFields.slice(1);
+                userSession.incomplete_fields = incompleteFields;
+                
+                return `🚫 **Search Blocked - Complete Profile First**
 
 Your profile: ${completionPercentage}% complete
-Required: 70% minimum
+Required: 100% completion
 
-Ready to continue your profile? Reply YES`;
+Starting profile completion:
+
+**Step 1 of ${incompleteFields.length}:** ${getFieldDisplayName(firstField)}
+
+${await getFieldPrompt(firstField, userSession)}`;
             }
             
             return await handleSearchRequest(intent, userSession, whatsappNumber);
@@ -291,22 +453,23 @@ What can I help you find today?`;
             
             return `Great! Let's complete your profile with our enhanced system.
 
-Step 1/${totalFields}:
+**Step 1 of ${totalFields}:** ${getFieldDisplayName(firstField)}
 
 ${await getFieldPrompt(firstField, userSession)}`;
         } else {
             const user = userSession.user_data;
-            const hasMinCompletion = hasMinimumProfileCompletion(user, 70);
+            const searchAccess = canAccessSearch(user);
             
-            if (!hasMinCompletion) {
+            if (!searchAccess.canAccess) {
                 const completionPercentage = getProfileCompletionPercentage(user);
-                return `You need 70% profile completion to access alumni search.
+                return `⚠️ **Search Requires Complete Profile**
 
 Your profile: ${completionPercentage}% complete
+Required: 100% completion
 
-Would you like to complete it now? Reply YES
+You must complete your profile to access alumni search.
 
-Or you can ask general questions about our network.`;
+Ready to continue? Reply YES`;
             }
             
             userSession.waiting_for = 'ready';
@@ -315,12 +478,7 @@ Or you can ask general questions about our network.`;
             
             return `Perfect! I'm here to help you connect with amazing alumni. 🌟
 
-What can I help you find today?
-
-Examples:
-- "Need help with web development"
-- "Looking for startup mentors"
-- "Connect me with healthcare professionals"`;
+What can I help you find today?`;
         }
         
     } catch (error) {
@@ -336,7 +494,7 @@ async function handleAdditionalEmailChoice(userMessage, intent, userSession, wha
             userSession.waiting_for = 'additional_email_input';
             return `Please enter your additional email address:
 
-Example: newemail@domain.com
+**Example:** newemail@domain.com
 
 This will be linked to your existing account for better connectivity.`;
         } else {
@@ -392,7 +550,7 @@ async function handleInstagramChoice(userMessage, intent, userSession, whatsappN
             
             return `Please enter your Instagram profile URL:
 
-Example: https://instagram.com/yourprofile
+**Example:** https://instagram.com/yourprofile
 
 Type "later" to skip this step.`;
         } else {
@@ -403,100 +561,6 @@ Type "later" to skip this step.`;
     } catch (error) {
         logError(error, { operation: 'handleInstagramChoice', whatsappNumber });
         return "Let's try that again. Do you have an Instagram profile to share? Reply YES or NO";
-    }
-}
-
-// Handle regular user interactions - DIRECT PROFILE START
-async function handleRegularInteraction(userMessage, intent, userSession, whatsappNumber, user, userName) {
-    try {
-        const incompleteFields = getIncompleteFields(user);
-        const isProfileComplete = incompleteFields.length === 0;
-        const completionPercentage = getProfileCompletionPercentage(user);
-        const hasMinCompletion = hasMinimumProfileCompletion(user, 70);
-        
-        if (intent.type === 'profile_update') {
-            if (incompleteFields.length > 0) {
-                const firstField = incompleteFields[0];
-                const totalFields = incompleteFields.length;
-                
-                userSession.waiting_for = `updating_${firstField}`;
-                userSession.current_field = firstField;
-                userSession.remaining_fields = incompleteFields.slice(1);
-                userSession.incomplete_fields = incompleteFields;
-                
-                return `Let's complete your profile!
-
-Step 1/${totalFields}:
-
-${await getFieldPrompt(firstField, userSession)}`;
-            } else {
-                return `Your profile is already complete! 🎉
-
-Profile completion: 100%
-All enhanced fields filled ✅
-
-What can I help you find today?`;
-            }
-        }
-        
-        if (intent.type === 'casual') {
-            return await handleCasualConversation(userMessage, {
-                name: userName,
-                profileComplete: isProfileComplete,
-                authenticated: true,
-                completionPercentage: completionPercentage
-            });
-        }
-        
-        // DIRECT PROFILE START - No asking, just start if <70%
-        if (!hasMinCompletion && !userSession.profile_started) {
-            const firstField = incompleteFields[0];
-            const totalFields = incompleteFields.length;
-            
-            userSession.waiting_for = `updating_${firstField}`;
-            userSession.current_field = firstField;
-            userSession.remaining_fields = incompleteFields.slice(1);
-            userSession.incomplete_fields = incompleteFields;
-            userSession.profile_started = true;
-            
-            return `Welcome back, ${userName}! 👋
-
-Your profile is ${completionPercentage}% complete.
-Let's complete it to unlock alumni search (70% required).
-
-Step 1/${totalFields}:
-
-${await getFieldPrompt(firstField, userSession)}`;
-        }
-        
-        // If profile is sufficient, show search options
-        if (hasMinCompletion) {
-            userSession.ready = true;
-            userSession.waiting_for = 'ready';
-            
-            return `Hi ${userName}! 👋
-
-Your profile: ${completionPercentage}% complete ✅
-
-What expertise are you looking for today?
-
-Examples:
-- "Need help with React development"
-- "Looking for fintech entrepreneurs" 
-- "Connect me with marketing experts"
-- "Find healthcare professionals in Mumbai"`;
-        }
-        
-        // Fallback message
-        return `Hi ${userName}! 👋
-
-Let's get your profile ready for networking!`;
-        
-    } catch (error) {
-        logError(error, { operation: 'handleRegularInteraction', whatsappNumber });
-        return `Hi ${userName}! 👋
-
-I'm here to help you connect with our alumni network. What can I help you find today?`;
     }
 }
 
@@ -514,7 +578,7 @@ async function moveToNextProfileField(userSession, whatsappNumber) {
             userSession.current_field = nextField;
             userSession.remaining_fields = remainingFields.slice(1);
             
-            return `Step ${currentStep + 1}/${totalFields}:
+            return `**Step ${currentStep + 1} of ${totalFields}:** ${getFieldDisplayName(nextField)}
 
 ${await getFieldPrompt(nextField, userSession)}`;
         } else {
@@ -529,7 +593,7 @@ ${await getFieldPrompt(nextField, userSession)}`;
             delete userSession.remaining_fields;
             delete userSession.incomplete_fields;
             
-            return `🎉 Profile completed!
+            return `🎉 **Profile Completed!**
 
 You're now fully connected to our enhanced alumni network!
 
@@ -542,6 +606,24 @@ What can I help you find today?`;
     }
 }
 
+// Helper function for field-specific help tips
+function getFieldHelpTips(fieldName) {
+    const helpTips = {
+        fullName: '• Use your real full name\n• Only letters, spaces, hyphens allowed\n• Example: "Rajesh Kumar Singh"',
+        city: '• Enter your current city name\n• Use real city names only\n• Examples: "Mumbai", "New York", "London"',
+        state: '• Enter your state/province\n• Use official state names\n• Examples: "Maharashtra", "California", "Ontario"',
+        country: '• Enter your country name\n• Use official country names\n• Examples: "India", "United States", "Canada"',
+        phone: '• Include country code\n• Format: +91 9876543210\n• Or: 919876543210',
+        linkedin: '• Full LinkedIn URL required\n• Format: https://linkedin.com/in/yourprofile',
+        dateOfBirth: '• Format: DD-MM-YYYY\n• Example: 15-08-1995\n• Year between 1960-2010',
+        gender: '• Select 1, 2, or 3\n• 1 = Male, 2 = Female, 3 = Others',
+        domain: '• Select number from list\n• Choose your primary industry',
+        professionalRole: '• Select number from list\n• Choose your current role'
+    };
+    
+    return helpTips[fieldName] || 'Please follow the format shown in the example above.';
+}
+
 // Helper function to get display name for fields
 function getFieldDisplayName(fieldName) {
     const displayNames = {
@@ -551,7 +633,7 @@ function getFieldDisplayName(fieldName) {
         dateOfBirth: 'Date of Birth',
         country: 'Country',
         city: 'City',
-        state: 'State',
+        state: 'State/Province',
         phone: 'Phone Number',
         additionalEmail: 'Additional Email',
         linkedin: 'LinkedIn Profile',
@@ -569,5 +651,6 @@ module.exports = {
     handleAuthenticatedUser,
     handleSearchRequest,
     handleProfileFieldUpdate,
-    moveToNextProfileField
+    moveToNextProfileField,
+    getFieldDisplayName
 };
