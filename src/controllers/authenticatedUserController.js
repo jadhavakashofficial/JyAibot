@@ -1,13 +1,28 @@
 // Authenticated user controller for JY Alumni Bot with STRICT 100% profile completion enforcement
 // File: src/controllers/authenticatedUserController.js
-// COMPLETE REPLACEMENT - Enhanced with strict profile validation and better UX
+// COMPLETE WORKING VERSION - Fixed canAccessSearch issue
 
-const { getIncompleteFields, updateUserProfile, markProfileCompleted, getProfileCompletionPercentage, hasMinimumProfileCompletion, findUserByWhatsAppNumber, ENHANCED_PROFILE_FIELDS, canAccessSearch } = require('../models/User');
+const { getIncompleteFields, updateUserProfile, markProfileCompleted, getProfileCompletionPercentage, hasMinimumProfileCompletion, findUserByWhatsAppNumber, ENHANCED_PROFILE_FIELDS } = require('../models/User');
 const { comprehensiveAlumniSearch } = require('../services/searchService');
 const { checkDailyLimit } = require('../services/rateLimiter');
 const { handleCasualConversation } = require('./conversationController');
 const { validateProfileField, getFieldPrompt } = require('./profileController');
 const { logUserActivity, logError } = require('../middleware/logging');
+
+// Manual canAccessSearch function (since it's not in User model)
+function canAccessSearch(user) {
+    const incompleteFields = getIncompleteFields(user);
+    const completionPercentage = getProfileCompletionPercentage(user);
+    const isComplete = incompleteFields.length === 0;
+    
+    return {
+        canAccess: isComplete,
+        reason: isComplete ? 'Profile complete' : 'Profile incomplete',
+        completionPercentage: completionPercentage,
+        incompleteFields: incompleteFields,
+        requiredActions: incompleteFields.map(field => `Complete ${field}`)
+    };
+}
 
 // Main handler for authenticated user interactions with STRICT 100% profile enforcement
 async function handleAuthenticatedUser(userMessage, intent, userSession, whatsappNumber) {
