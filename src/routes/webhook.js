@@ -1,6 +1,6 @@
 // Webhook route handler for Twilio WhatsApp integration
 // File: src/routes/webhook.js
-// COMPLETE REPLACEMENT - Enhanced with strict profile completion enforcement and better error handling
+// FIXED VERSION - Corrected imports and removed canAccessSearch usage
 
 const express = require('express');
 const router = express.Router();
@@ -8,7 +8,7 @@ const { asyncHandler } = require('../middleware/errorHandlers');
 const { logUserActivity, logError } = require('../middleware/logging');
 const { sanitizeInput } = require('../utils/validation');
 const { detectUserIntent, validateIntentForUserState } = require('../services/intentDetection');
-const { findUserByWhatsAppNumber, canAccessSearch } = require('../models/User');
+const { findUserByWhatsAppNumber } = require('../models/User'); // FIXED: Removed canAccessSearch import
 const { loadUserSession, saveUserSession } = require('../services/sessionManager');
 const { sendTwilioMessage } = require('../services/twilioService');
 const { handleAuthenticatedUser } = require('../controllers/authenticatedUserController');
@@ -42,11 +42,16 @@ router.post('/', asyncHandler(async (req, res) => {
     }
     
     // Rate limiting check
-    const rateLimitResult = await checkAdvancedRateLimit(whatsappNumber, 'message');
-    if (!rateLimitResult.allowed) {
-        const rateLimitMessage = generateRateLimitMessage(rateLimitResult);
-        await sendTwilioMessage(From, rateLimitMessage);
-        return res.status(200).send('');
+    try {
+        const rateLimitResult = await checkAdvancedRateLimit(whatsappNumber, 'message');
+        if (!rateLimitResult.allowed) {
+            const rateLimitMessage = generateRateLimitMessage(rateLimitResult);
+            await sendTwilioMessage(From, rateLimitMessage);
+            return res.status(200).send('');
+        }
+    } catch (rateLimitError) {
+        console.log('⚠️ Rate limiting check failed, allowing request:', rateLimitError.message);
+        // Continue processing if rate limiting fails
     }
     
     // Log user activity
@@ -81,16 +86,15 @@ router.post('/', asyncHandler(async (req, res) => {
         let responseMessage = '';
         
         if (existingUser) {
-            // Handle existing authenticated user with enhanced validation
+            // Handle existing authenticated user
             console.log(`👤 Existing user found: ${existingUser.basicProfile?.name || 'Unknown'}`);
             
             userSession.authenticated = true;
             userSession.user_data = existingUser;
             userSession.whatsappNumber = whatsappNumber;
             
-            // Check profile completion status
-            const searchAccess = canAccessSearch(existingUser);
-            console.log(`🔍 Search access: ${searchAccess.canAccess ? 'ALLOWED' : 'BLOCKED'} (${searchAccess.completionPercentage}% complete)`);
+            // FIXED: Removed canAccessSearch call - let controller handle profile checks
+            console.log(`🔍 Profile completion: ${existingUser.enhancedProfile?.completed ? 'COMPLETE' : 'INCOMPLETE'}`);
             
             responseMessage = await handleAuthenticatedUser(userMessage, intent, userSession, whatsappNumber);
         } else {
@@ -119,23 +123,27 @@ router.post('/', asyncHandler(async (req, res) => {
                 retryDelay: 1000 
             });
             
-            if (messageSent.success) {
+            if (messageSent && messageSent.success) {
                 console.log(`✅ Response sent successfully to ${whatsappNumber.replace(/[^\d]/g, '').slice(-4)}`);
                 logUserActivity(whatsappNumber, 'response_sent', {
                     responseLength: responseMessage.length,
                     intent: intent.type,
-                    messageSid: messageSent.messageSid
+                    messageSid: messageSent.messageSid || 'unknown'
                 });
             } else {
-                console.log(`❌ Failed to send response to ${whatsappNumber.replace(/[^\d]/g, '').slice(-4)}: ${messageSent.error}`);
+                console.log(`❌ Failed to send response to ${whatsappNumber.replace(/[^\d]/g, '').slice(-4)}: ${messageSent?.error || 'Unknown error'}`);
                 logUserActivity(whatsappNumber, 'response_failed', {
                     intent: intent.type,
-                    error: messageSent.error,
-                    attempts: messageSent.attempts
+                    error: messageSent?.error || 'Unknown error',
+                    attempts: messageSent?.attempts || 1
                 });
                 
                 // Try to send a simple error message
-                await sendTwilioMessage(From, "⚠️ Message delivery failed. Please try again.", { maxRetries: 1 });
+                try {
+                    await sendTwilioMessage(From, "⚠️ Message delivery failed. Please try again.", { maxRetries: 1 });
+                } catch (fallbackError) {
+                    console.log('❌ Fallback message also failed:', fallbackError.message);
+                }
             }
         }
         
@@ -210,29 +218,37 @@ router.get('/', (req, res) => {
 
 // Webhook health check endpoint
 router.get('/health', asyncHandler(async (req, res) => {
-    const { isDbConnected } = require('../config/database');
-    const { getConfig } = require('../config/environment');
-    
-    const config = getConfig();
-    const healthStatus = {
-        webhook: 'operational',
-        database: isDbConnected() ? 'connected' : 'disconnected',
-        twilio: !!(config.twilio.accountSid && config.twilio.authToken) ? 'configured' : 'not_configured',
-        ai_services: !!config.ai.apiKey ? 'available' : 'unavailable',
-        profile_enforcement: 'strict_100_percent',
-        last_check: new Date().toISOString()
-    };
-    
-    const allHealthy = Object.values(healthStatus).every(status => 
-        status === 'operational' || status === 'connected' || status === 'configured' || 
-        status === 'available' || status === 'strict_100_percent'
-    );
-    
-    res.status(allHealthy ? 200 : 503).json({
-        status: allHealthy ? 'healthy' : 'degraded',
-        checks: healthStatus,
-        timestamp: new Date().toISOString()
-    });
+    try {
+        const { isDbConnected } = require('../config/database');
+        const { getConfig } = require('../config/environment');
+        
+        const config = getConfig();
+        const healthStatus = {
+            webhook: 'operational',
+            database: isDbConnected() ? 'connected' : 'disconnected',
+            twilio: !!(config.twilio.accountSid && config.twilio.authToken) ? 'configured' : 'not_configured',
+            ai_services: !!config.ai.apiKey ? 'available' : 'unavailable',
+            profile_enforcement: 'strict_100_percent',
+            last_check: new Date().toISOString()
+        };
+        
+        const allHealthy = Object.values(healthStatus).every(status => 
+            status === 'operational' || status === 'connected' || status === 'configured' || 
+            status === 'available' || status === 'strict_100_percent'
+        );
+        
+        res.status(allHealthy ? 200 : 503).json({
+            status: allHealthy ? 'healthy' : 'degraded',
+            checks: healthStatus,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(503).json({
+            status: 'error',
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
 }));
 
 // Generate rate limit message
@@ -393,9 +409,6 @@ async function logWebhookStats(req, intent, processingTime) {
             authenticated: !!req.userSession?.authenticated,
             profileComplete: !!req.userSession?.user_data?.enhancedProfile?.completed
         };
-        
-        // Log to analytics service if available
-        // await analyticsService.logWebhookStats(stats);
         
         console.log(`📊 Webhook stats: ${intent.type} (${processingTime}ms)`);
     } catch (error) {
